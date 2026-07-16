@@ -9,5 +9,4 @@ class AgentState(TypedDict):
     answer: str
     web_search_needed: bool
     grade: str
-    num_retrieves: str
-    
+    num_retries : int 
