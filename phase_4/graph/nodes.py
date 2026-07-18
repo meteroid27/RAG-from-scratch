@@ -2,10 +2,18 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 import os
+import asyncio
+from state import AgentState
 from  phase_1.bm25_search import BM25Index
 from phase_1.vector_db import dense_retrival
 from phase_1.reciprocal_fusion import reciprocal_rank_fusion
 from phase_1.cross_modal import rerank
+from phase_2.crag import web_search_fallback , evaluate_retrieval_quality
+from phase_2.multi_query import generate_multi_query
+from phase_2.step_back import step_back_query
+from phase_2.RRF_multi import RRF_multi_query
+from phase_3.redis_caching import get_cached_answer
+from phase_3.async_io import  async_bm25_retrieve, async_dense_retrieve, async_hybrid_retrieve
 from tavily import TavilyClient
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 from langchain_huggingface import ChatHuggingFace , HuggingFaceEndpoint
@@ -34,19 +42,41 @@ def route_query(state):
     decision = response.content.strip().lower()
     
     return {
-        "web search needed": decision == "search",
+        "web_search_needed": decision == "search",
         "num_retries": state.get("num_retries", 0) 
     }
 
 #node 2: rag retrieval
-def rag_retrieve(state, chunks):
+
+async def rag_retrieve(state: AgentState, chunks: list[dict]) -> AgentState:
+    """
+    Step-back + multi-query (your own "rag_fusion" technique), retrieved
+    concurrently across all variants, fused with one RRF pass, then CRAG
+    grades and corrects before reranking.
+    """
     query = state["query"]
-    dense_result = dense_retrival(query , k = 15)
-    bm25_index = BM25Index(chunks )
-    bm25_result = bm25_index.retrieve(query , k=15)
-    fused = reciprocal_rank_fusion([dense_result, bm25_result ])
-    final_chunks = rerank(query, fused[:15])
-    
+
+    _, step_back = step_back_query(query)
+    variants = generate_multi_query(query, n=3)
+    all_queries = list(dict.fromkeys([query, step_back] + variants))
+
+    tasks = []
+    for q in all_queries:
+        tasks.append(async_dense_retrieve(q, k=10))
+        tasks.append(async_bm25_retrieve(q, chunks, k=10))
+    all_result_lists = await asyncio.gather(*tasks)
+
+    fused = reciprocal_rank_fusion(all_result_lists)[:15]
+
+    grade = evaluate_retrieval_quality(query, fused[:5])
+    if grade == "good":
+        candidates = fused
+    elif grade == "partial":
+        candidates = fused + web_search_fallback(query)
+    else:
+        candidates = web_search_fallback(query)
+
+    final_chunks = rerank(query, candidates[:15])
     return {"documents": final_chunks}
 
 # node 3: web search 
@@ -61,6 +91,8 @@ def web_search(state):
         }
         for r in results["results"]
         ]
+    
+    return {"documents": documents}
 
 
 # node 4: generate
@@ -98,3 +130,18 @@ def grade_and_reflect(state):
         "grade": grade,
         "num_retries": state.get("num_retries", 0) + 1
     }
+
+
+def check_cache(state , video_id):
+    cached = get_cached_answer(state["query"], video_id)
+    if cached:
+        return {"answer" : cached , "cached hit":True}
+    return {"cached hit": False}
+
+def cache_result(state , video_id):
+    cache_result(state["query"],video_id , state["answer"])
+    return {}
+
+
+
+    
