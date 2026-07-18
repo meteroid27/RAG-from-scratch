@@ -1,5 +1,5 @@
 from langgraph.graph import END
-from graph.state import AgentState
+from state import AgentState
 
 def decide_retrieve_path(state):
     
@@ -10,7 +10,7 @@ def decide_retrieve_path(state):
 def decide_after_grading(state):
     
     if state["grade"] == "good":
-        return END
+        return "cache_result"
     
     if state.get("num_retrive", 0) >= 2:
         print("max tries are done")
@@ -18,3 +18,4 @@ def decide_after_grading(state):
     
     return "route_query"
         
+
