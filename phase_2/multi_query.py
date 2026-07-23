@@ -1,15 +1,13 @@
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from dotenv import load_dotenv 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from google import genai
+from google.genai import types
 
+from dotenv import load_dotenv 
 load_dotenv()
 
-llm = HuggingFaceEndpoint(
-    repo_id= 'Qwen/Qwen2.5-72B-Instruct',
-    task = "text-generation"
-)
-
-model = ChatHuggingFace(llm = llm )
-
+client = genai.Client()
 
 def generate_multi_query(original_query, n):
     
@@ -18,27 +16,35 @@ def generate_multi_query(original_query, n):
     Return ONLY the queries, one per line, no numbering or extra text.
     Original question: {original_query}
     {n} alternative queries:"""
-
-    response = model.invoke(prompt).content
     
-    varients = response.strip().split("\n")
+    response = client.models.generate_content(
+        model = "gemini-3.6-flash",
+        contents = prompt
+        )   
     
+    varients = response.text.strip().split("\n")
+         
     result = [v.strip() for v in varients if v.strip()]
-
-    all_query = original_query + result
+ 
+    all_query = [original_query] + result
     print(all_query)
     return all_query
-    
-original_query = ["what are they talking about dopamine?"]
-
-generate_multi_query(original_query, 3)
-
-    
-
-    
-    
-    
-    
 
 
+        
+
     
+
+    
+
+    
+
+    
+
+
+
+
+
+    
+
+
