@@ -1,9 +1,20 @@
+# src/phase3/cache.py
+import os
 import redis
 import hashlib
 import json
+from dotenv import load_dotenv
 
-redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
-CACHE_TTL = 3600 
+load_dotenv()
+
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST"),
+    port=int(os.getenv("REDIS_PORT")),
+    password=os.getenv("REDIS_PASSWORD"),
+    decode_responses=True,
+)
+
+CACHE_TTL = 3600  # 1 hour
 
 def make_cache_key(query: str, video_id: str):
     content = f"{video_id}:{query.lower().strip()}"

@@ -1,5 +1,5 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecurter
+from concurrent.futures import ThreadPoolExecutor
 import sys 
 from pathlib import Path
 sys.path.append(Path(__file__).resolve().parent.parent)
@@ -8,7 +8,7 @@ from phase_1.vector_db import dense_retrival
 from phase_1.bm25_search import BM25Index
 from phase_1.reciprocal_fusion import reciprocal_rank_fusion
 
-executor = ThreadPoolExecurter(max_workers = 4)
+executor = ThreadPoolExecutor(max_workers = 4)
 
 async def async_dense_retrieve(query: str, k: int):
     loop = asyncio.get_event_loop()
