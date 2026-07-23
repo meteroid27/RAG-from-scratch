@@ -4,7 +4,9 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 import os
 import asyncio
 from state import AgentState
-from  phase_1.bm25_search import BM25Index
+from llm.provider import fast_model, reasoning_model
+from phase_1.bm25_search import BM25Index
+from langchain_core.output_parsers import StrOutputParser
 from phase_1.vector_db import dense_retrival
 from phase_1.reciprocal_fusion import reciprocal_rank_fusion
 from phase_1.cross_modal import rerank
@@ -12,48 +14,49 @@ from phase_2.crag import web_search_fallback , evaluate_retrieval_quality
 from phase_2.multi_query import generate_multi_query
 from phase_2.step_back import step_back_query
 from phase_2.RRF_multi import RRF_multi_query
-from phase_3.redis_caching import get_cached_answer
+from phase_3.redis_caching import get_cached_answer , cache_answer
 from phase_3.async_io import  async_bm25_retrieve, async_dense_retrieve, async_hybrid_retrieve
 from tavily import TavilyClient
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace , HuggingFaceEndpoint
 from dotenv import load_dotenv
 load_dotenv()
 
-llm = HuggingFaceEndpoint(
-    repo_id = "Qwen/Qwen2.5-72B-Instruct",
-    task = "text-generation"
-)
 
-model =  ChatHuggingFace(llm = llm)
-
-
+model1 = fast_model()
+model2 = reasoning_model()
+parser = StrOutputParser()
 # node 1: router
 def route_query(state):
     
-    prompt = f"""Decide if this question needs web search or can be answered
-    from a local video knowledge base.
+    prompt = f"""Decide how to answer this question about a YouTube video's content.
+    Reply with ONLY one of these four words:
 
-    Reply with ONLY one word: "retrieve" or "search"
-    
+    "direct" — nothing to do with the video's content. If it could plausibly
+           be about the video, do NOT choose this.
+    "simple" — a single, specific fact clearly stated in the video
+           (a name, a number, a one-sentence definition given in the video)
+    "complex" — needs connecting multiple points, reasoning across the video,
+            or something broad/open-ended about it
+    "search" — needs current/recent information the video wouldn't have
+
     Question: {state["query"]}"""
     
-    response = model.invoke(prompt)
-    decision = response.content.strip().lower()
+    response = model1.invoke(prompt)
+    decision = parser.invoke(response).strip().lower()
     
-    return {
-        "web_search_needed": decision == "search",
-        "num_retries": state.get("num_retries", 0) 
+    if decision not in ("direct" , "simple" ,"complex", "search" ):
+        decision = "complex"
+        
+    return{
+        "retrieval_path": decision,
+        "num_retries" : state.get("num_retries", 0)
     }
-
 #node 2: rag retrieval
 
 async def rag_retrieve(state: AgentState, chunks: list[dict]) -> AgentState:
-    """
-    Step-back + multi-query (your own "rag_fusion" technique), retrieved
-    concurrently across all variants, fused with one RRF pass, then CRAG
-    grades and corrects before reranking.
-    """
+
     query = state["query"]
 
     _, step_back = step_back_query(query)
@@ -76,7 +79,7 @@ async def rag_retrieve(state: AgentState, chunks: list[dict]) -> AgentState:
     else:
         candidates = web_search_fallback(query)
 
-    final_chunks = rerank(query, candidates[:15])
+    final_chunks = rerank(query, candidates[:15], 15)
     return {"documents": final_chunks}
 
 # node 3: web search 
@@ -107,8 +110,8 @@ def generate(state):
     Question: {state["query"]}
     Answer:"""
 
-    response = model.invoke(prompt)
-    return {"answer": response.content}
+    response = model2.invoke(prompt)
+    return {"answer": parser.invoke(response)}
 
 # node 5: grade + reflect
 def grade_and_reflect(state):
@@ -121,8 +124,8 @@ def grade_and_reflect(state):
     Question: {state["query"]}
     Answer: {state["answer"]}"""
 
-    response = model.invoke(prompt)
-    grade = response.content.strip().lower()
+    response = model1.invoke(prompt)
+    grade = parser.invoke(response).strip().lower()
     if grade not in ["good", "bad"]:
         grade = "bad"
 
@@ -135,13 +138,22 @@ def grade_and_reflect(state):
 def check_cache(state , video_id):
     cached = get_cached_answer(state["query"], video_id)
     if cached:
-        return {"answer" : cached , "cached hit":True}
-    return {"cached hit": False}
+        return {"answer" : cached , "cache_hit":True}
+    return {"cache_hit": False}
 
 def cache_result(state , video_id):
-    cache_result(state["query"],video_id , state["answer"])
+    cache_answer(state["query"],video_id , state["answer"])
     return {}
 
 
-
+async def simple_rag_retrieve(state , chunks):
     
+    query = state["query"]
+    fused = async_hybrid_retrieve(query , chunks , k=15)
+    final_chunk = rerank(query , fused[:15])
+    return { 
+        "documents":final_chunk
+    }
+    
+
+        
