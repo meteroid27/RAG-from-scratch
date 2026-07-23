@@ -2,10 +2,8 @@
 import logging
 import os
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi
-from langchain_openai import ChatOpenAI
 from langchain_huggingface import ChatHuggingFace , HuggingFaceEndpoint
-
+from fetch import fetch_transcript
 from chunking import chunk_transcript
 from vector_db import collection, index_chunks, dense_retrival
 from bm25_search import BM25Index
@@ -24,15 +22,6 @@ VIDEO_ID = "SwQhKFMxmDY"
 RRF_K = 60
 DENSE_K = 15
 BM25_K = 15
-
-# ── Fetch ────────────────────────────────────────────────
-def fetch_transcript(video_id: str) -> list[dict]:
-    api = YouTubeTranscriptApi()
-    transcript = api.fetch(video_id)
-    return [
-        {"text": s.text, "start": s.start, "duration": s.duration}
-        for s in transcript
-    ]
 
 # ── Generate ─────────────────────────────────────────────
 def generate(query: str, context_chunks: list[dict]) -> str:

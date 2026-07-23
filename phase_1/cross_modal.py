@@ -1,13 +1,20 @@
 from sentence_transformers import CrossEncoder
 
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+    if _reranker is None:
+        _reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _reranker
 
 def rerank(query, candidates, top_n):
     if not candidates:
         return []
     
     pairs = [[query, candidate["text"]]for candidate in candidates]
-    scores = reranker.predict(pairs)
+    scores = _get_reranker().predict(pairs)
     
     for candidate, score in zip(candidates, scores):
         candidate["rerank_score"] = float(score)
